@@ -1,4 +1,4 @@
-# Vision Language Models 
+# Vision Language Models - Test Repo connection to Supplementary Materials [WIP]
 Final team project for the class DL CS 7643 at Georgia Tech, Spring 2024. Team: Deep Thinkers.
 
 To run a vlm_reasoner, salloc or sbatch on GaTech Pace clusters with a V100 with at least 32Gb memory.
@@ -17,10 +17,9 @@ Current repository structure:
 ├── assets
 ├── dataset
 ├── modules
-│   ├── conditional_visual
-│   ├── utils
-│   └── vlm_reasoners
+│   ├── ahmad_conditional_visual
+│   └── denisa_vlm_reasoners
+├── requirements
 └── scripts
 
 ```
-
