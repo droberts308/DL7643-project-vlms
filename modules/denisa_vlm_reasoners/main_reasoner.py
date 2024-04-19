@@ -309,7 +309,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_root",
         type=str,
-        default="/home/hice1/droberts308/scratch/smart/SMART101-release-v1/SMART101-Data/",
         help="location of the csv files, and location of the images, relative location is provided in the csv file.",
     )
     parser.add_argument(
@@ -327,7 +326,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--save_root",
         type=str,
-        default="/home/hice1/droberts308/scratch/saved_stuff",
         help="location to save intermediate files.",
     )
     parser.add_argument(
@@ -376,18 +374,12 @@ if __name__ == "__main__":
         action="store_true",
         help="use a single image head for all the puzzles?",
     )
-    parser.add_argument(
-        "--fsK",
-        type=int,
-        default=100,
-        help="how many samples should we use to train in a fewshot setting?",
-    )
     parser.add_argument("--log_freq", type=int, default=50, help="log frequency?")
     parser.add_argument("--test", action="store_true", help="evaluate a model?")
     parser.add_argument(
         "--train_backbone", action="store_true", help="train the image backbone?"
     )
-   
+
     parser.add_argument(
         "--feat_size",
         type=int,
