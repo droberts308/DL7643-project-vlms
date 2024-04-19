@@ -50,9 +50,12 @@ class Puzzle_Net(nn.Module):
             self.im_feat_size = im_backbone.fc.weight.shape[1]
             modules = list(im_backbone.children())[:-1]
             self.im_cnn = nn.Sequential(*modules)
-
+        elif args.model_name in ["dinov2"]:
+            self.preprocess = args.preprocess
+            self.im_cnn = lambda x: self.process_dinov2(x)
+            self.im_backbone = im_backbone
+            self.im_feat_size = 768
        
-
         else:
             raise "unknown model_name %s" % (args.model_name)
 
