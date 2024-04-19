@@ -1,4 +1,4 @@
-# Vision Language Models - [WIP]
+# On Vision Language Models - [WIP]
 Final team project for the class DL CS 7643 at Georgia Tech, Spring 2024. Team: Deep Thinkers.
 
 The design of the code repository aims to be modular, dependencies minimized with async development and parallelisms between tasks in mind.
