@@ -50,9 +50,12 @@ class Puzzle_Net(nn.Module):
             self.im_feat_size = im_backbone.fc.weight.shape[1]
             modules = list(im_backbone.children())[:-1]
             self.im_cnn = nn.Sequential(*modules)
-
+        elif args.model_name in ["dinov2"]:
+            self.preprocess = args.preprocess
+            self.im_cnn = lambda x: self.process_dinov2(x)
+            self.im_backbone = im_backbone
+            self.im_feat_size = 768
        
-
         else:
             raise "unknown model_name %s" % (args.model_name)
 
@@ -378,6 +381,13 @@ class Puzzle_CLIP_Net(nn.Module):
             else:
                 ans_decoder.append(nn.LSTM(self.out_dim, num_classes, num_layers=1, batch_first=True))
         self.ans_decoder = nn.ModuleList(ans_decoder)
+
+    def process_dinov2(self, x):
+        device = torch.device("cuda")
+        inputs = self.preprocess(images=x, do_rescale=False, return_tensors="pt").to(device)
+        with torch.no_grad():
+            outputs = self.im_backbone(**inputs)
+        return outputs.last_hidden_state.mean(1)
 
     def process(self, im, q_text):
         q_text = self.decode_text(q_text)
