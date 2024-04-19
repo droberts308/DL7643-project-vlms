@@ -382,6 +382,13 @@ class Puzzle_CLIP_Net(nn.Module):
                 ans_decoder.append(nn.LSTM(self.out_dim, num_classes, num_layers=1, batch_first=True))
         self.ans_decoder = nn.ModuleList(ans_decoder)
 
+    def process_dinov2(self, x):
+        device = torch.device("cuda")
+        inputs = self.preprocess(images=x, do_rescale=False, return_tensors="pt").to(device)
+        with torch.no_grad():
+            outputs = self.im_backbone(**inputs)
+        return outputs.last_hidden_state.mean(1)
+
     def process(self, im, q_text):
         q_text = self.decode_text(q_text)
         text = clip.tokenize(q_text, truncate=True).to("cuda")
