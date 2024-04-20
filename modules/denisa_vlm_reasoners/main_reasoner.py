@@ -295,7 +295,7 @@ def get_data_loader(
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description="SMART dataset")
+    parser = argparse.ArgumentParser(description="Smart vl puzzles")
     parser.add_argument(
         "--puzzles",
         default="all",
