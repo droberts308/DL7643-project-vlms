@@ -19,8 +19,6 @@ import model_utils as gv
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-
-# Vision backbones and language backbones.
 class Puzzle_Net(nn.Module):
     def __init__(self, args, im_backbone=None):
         super(Puzzle_Net, self).__init__()
@@ -55,13 +53,21 @@ class Puzzle_Net(nn.Module):
             self.im_cnn = lambda x: self.process_dinov2(x)
             self.im_backbone = im_backbone
             self.im_feat_size = 768
+        elif args.model_name in ["clip"]:
+            self.im_feat_size = 768
+            self.im_cnn = im_backbone
+            self.im_cnn.heads.head = nn.Identity()
+        elif args.model_name in ["mae"]:
+            self.preprocess = args.preprocess
+            self.im_cnn = lambda x: self.process_MAE(x)
+            self.im_backbone = im_backbone
+            self.im_feat_size = 768
        
         else:
             raise "unknown model_name %s" % (args.model_name)
 
         self.create_puzzle_head(args)
 
-        # language backbones
         if self.use_clip_text:
             self.q_encoder, _ = clip.load("ViT-B/32", device=device)
             self.clip_dim = 512
@@ -131,12 +137,12 @@ class Puzzle_Net(nn.Module):
         self.puzzle_ids = args.puzzle_ids
         ans_decoder = [
             nn.Sequential(nn.Linear(self.out_dim, 1))
-        ]  # start with a dummy as we are 1-indexed wrt puzzle ids.
+        ]  
         if args.puzzles == "all":
             puzzles = range(1, gv.num_puzzles + 1)
         else:
             puzzles = self.puzzle_ids
-        for pid in puzzles:  # self.puzzle_ids:
+        for pid in puzzles:  
             num_classes = (
                 gv.NUM_CLASSES_PER_PUZZLE[str(pid)]
                 if args.loss_type == "classifier"
@@ -387,6 +393,12 @@ class Puzzle_CLIP_Net(nn.Module):
         inputs = self.preprocess(images=x, do_rescale=False, return_tensors="pt").to(device)
         with torch.no_grad():
             outputs = self.im_backbone(**inputs)
+        return outputs.last_hidden_state.mean(1)
+    
+    def process_MAE(self, x):
+        x = self.decode_image(x)  
+        inputs = self.preprocess(images=x, return_tensors="pt").to("cuda")
+        outputs = self.im_backbone(**inputs)
         return outputs.last_hidden_state.mean(1)
 
     def process(self, im, q_text):
