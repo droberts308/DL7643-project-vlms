@@ -62,7 +62,16 @@ class Puzzle_Net(nn.Module):
             self.im_cnn = lambda x: self.process_MAE(x)
             self.im_backbone = im_backbone
             self.im_feat_size = 768
-       
+        elif args.model_name in ["siglip"]:
+            self.preprocess = args.preprocess
+            self.im_cnn = lambda x: self.process_dinov2(x)
+            self.im_backbone = im_backbone
+            self.im_repr_size = 768
+        elif args.model_name in ["fused_dinov2_siglip"]:
+            self.preprocess = args.preprocess
+            self.im_cnn = lambda x: self.process_fused(x)
+            self.im_backbone = im_backbone
+            self.im_repr_size = 768 + 768
         else:
             raise "unknown model_name %s" % (args.model_name)
 
