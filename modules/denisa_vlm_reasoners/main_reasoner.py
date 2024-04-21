@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 import vocab_utils
 import data_utils as dl
-import model_utils as gv
+import modules.denisa_vlm_reasoners.text_encoder as gv
 import losses
 import models
 import puzzle_utils
