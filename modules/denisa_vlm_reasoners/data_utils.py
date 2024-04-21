@@ -14,7 +14,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose, Normalize, Resize, ToTensor
 
-import model_utils as gv
+import modules.denisa_vlm_reasoners.text_encoder as gv
 import puzzle_utils
 
 

@@ -1,16 +1,12 @@
 import torch.nn as nn
 
-import model_utils as gv
+import text_encoder as gv
 
 
 class Criterion(nn.Module):
     def __init__(self, args):
         super(Criterion, self).__init__()
-        self.loss_type = args.loss_type
-        if args.loss_type == "classifier":
-            self.criterion = nn.CrossEntropyLoss()
-        elif args.loss_type == "regression":
-            self.criterion = nn.L1Loss()
+        self.criterion = nn.CrossEntropyLoss()
 
     def compute_loss(self, a, b, pids):
         loss = 0
@@ -26,14 +22,9 @@ class Criterion(nn.Module):
                     seq_loss += self.criterion(a[key][i], b[idx, i])  # .long()
                 seq_loss /= len(a[key])
                 loss += seq_loss
-            loss = loss / len(a.keys())
+        loss = loss / len(a.keys())
         return loss
 
     def forward(self, a, b, pids=None):
-        if self.loss_type == "classifier":
-            loss = self.compute_loss(a, b.long(), pids)
-        elif self.loss_type == "regression":
-            loss = self.compute_loss(a, b.float(), pids)
-        else:
-            raise "Unknown loss type: use classifer/regression"
+        loss = self.compute_loss(a, b.long(), pids)
         return loss

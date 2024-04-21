@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-import model_utils as gv
+import modules.denisa_vlm_reasoners.text_encoder as gv
 
 
 def reset_state(args):
