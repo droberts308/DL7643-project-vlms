@@ -1,3 +1,4 @@
+# Minimally edited from https://github.com/merlresearch/SMART
 import nltk
 
 try:
@@ -12,7 +13,7 @@ import os
 import pickle
 from collections import Counter
 
-from puzzle_utils import save_file
+from utils import save_file
 
 
 class Vocabulary(object):
@@ -49,7 +50,7 @@ def build_vocab(text_rows, threshold):
         counter.update(tokens)
 
     counter = sorted(counter.items(), key=lambda item: item[1], reverse=True)
-    save_file(dict(counter), "dataset/PuzzleQA/word_count.json")
+    save_file(dict(counter), "dataset/VideoQA/word_count.json")
     # If the word frequency is less than 'threshold', then the word is discarded.
     words = [item[0] for item in counter if item[1] >= threshold]
     print(len(words))
@@ -129,15 +130,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--train_csv_path",
-        type=str,
-        default="dataset/PuzzleQA/train.csv",
-        help="path for train file",
-    )
-    parser.add_argument(
         "--vocab_path",
         type=str,
-        default="dataset/PuzzleQA/vocab.pkl",
+        default="dataset/VideoQA/vocab.pkl",
         help="path for saving vocabulary wrapper",
     )
     parser.add_argument(
