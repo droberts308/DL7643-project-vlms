@@ -22,3 +22,4 @@ Experiments tracked in CometML
 To be able to create your own CometML plots, you must place your Comet API Key in the modules/denisa_vlm_reasoners/.comet_token file and your Comet account user in  modules/denisa_vlm_reasoners/.comet_workspace.
 
 
+For step-by-step development, please see PRs in https://github.com/D-Roberts/smarter.
