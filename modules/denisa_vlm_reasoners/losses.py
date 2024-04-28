@@ -1,3 +1,4 @@
+# Edited from https://github.com/merlresearch/SMART
 import torch.nn as nn
 
 import text_encoder as gv
@@ -19,7 +20,7 @@ class Criterion(nn.Module):
             else:
                 seq_loss = 0
                 for i in range(len(a[key])):
-                    seq_loss += self.criterion(a[key][i], b[idx, i])  # .long()
+                    seq_loss += self.criterion(a[key][i], b[idx, i])
                 seq_loss /= len(a[key])
                 loss += seq_loss
         loss = loss / len(a.keys())

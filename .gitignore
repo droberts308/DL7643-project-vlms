@@ -1,4 +1,4 @@
-# adapted from merl, prismatic
+# adapted from git, merl, prismatic
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -161,3 +161,6 @@ cython_debug/
 #.idea/
 
 .vscode
+
+data
+dataset
