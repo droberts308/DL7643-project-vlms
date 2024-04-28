@@ -1,3 +1,21 @@
+"""
+Copyright Denisa Roberts 2024
+
+# References
+# https://github.com/merlresearch/SMART
+# CVPR SMART article https://arxiv.org/pdf/2212.09993.pdf
+
+# adsformers https://ui.adsabs.harvard.edu/abs/2023arXiv230201255A/abstract
+# eficient vit image representations https://www.researchgate.net/profile/Denisa-Roberts/publication/370980888_Efficient_Large-Scale_Vision_Representation_Learning/links/64ecf9d99b1e56033da9d827/Efficient-Large-Scale-Vision-Representation-Learning.pdf
+
+# prismatic vlm https://arxiv.org/pdf/2402.07865.pdf
+# qformer https://arxiv.org/pdf/2301.12597
+# mbert https://link.springer.com/chapter/10.1007/978-3-030-72240-1_36
+
+# siglip https://huggingface.co/google/siglip-so400m-patch14-384
+# dinov2 https://huggingface.co/facebook/dinov2-base
+"""
+
 import os
 import warnings
 
@@ -8,124 +26,175 @@ warnings.filterwarnings("ignore")
 import pdb
 import pickle
 
-import clip
 import numpy as np
 import torch.nn.functional as F
 from PIL import Image
-from torchvision import models as tmodels
 
-import model_utils as gv
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+import text_encoder as gv
+from layers import (
+    QFLayer,
+    CLayer,
+    QV_Fusion,
+    PuzzleMLPDecoder,
+    get_activation_fn,
+    get_activation_layer,
+)
 
 
 class Puzzle_Net(nn.Module):
-    def __init__(self, args, im_backbone=None):
+    def __init__(self, args, im_backbone, device):
         super(Puzzle_Net, self).__init__()
         vocab_path = args.vocab_path
         with open(vocab_path, "rb") as f:
             self.vocab = pickle.load(f)
 
+        self.args = args
+        self.device = device
+
         self.num_opts = 5
-        self.out_dim = args.feat_size
-        self.h_sz = 256
-        self.dummy_question = None
+        self.out_dim = args.repr_size
+        self.h_sz = args.h_sz
         self.model_name = args.model_name
-        self.use_clip_text = args.use_clip_text
-        self.loss_type = args.loss_type
         self.use_single_image_head = args.use_single_image_head
-        self.train_backbone = args.train_backbone
         self.word_embed = args.word_embed
         self.sorted_puzzle_ids = np.sort(np.array([int(ii) for ii in args.puzzle_ids]))
 
-        if args.loss_type == "classifier" or args.loss_type == "puzzle_tails":
-            self.max_val = gv.MAX_VAL + 1
-        elif args.loss_type == "regression":
-            self.max_val = 1
+        self.max_val = gv.MAX_VAL + 1
 
-        # image backbones.
+        # Image backbones - frozen
         if args.model_name[:6] == "resnet":
-            self.im_feat_size = im_backbone.fc.weight.shape[1]
+            self.im_repr_size = im_backbone.fc.weight.shape[1]
             modules = list(im_backbone.children())[:-1]
             self.im_cnn = nn.Sequential(*modules)
+
         elif args.model_name in ["dinov2"]:
             self.preprocess = args.preprocess
             self.im_cnn = lambda x: self.process_dinov2(x)
             self.im_backbone = im_backbone
-            self.im_feat_size = 768
-        elif args.model_name in ["clip"]:
-            self.im_feat_size = 768
-            self.im_cnn = im_backbone
-            self.im_cnn.heads.head = nn.Identity()
-        elif args.model_name in ["mae"]:
-            self.preprocess = args.preprocess
-            self.im_cnn = lambda x: self.process_MAE(x)
-            self.im_backbone = im_backbone
-            self.im_feat_size = 768
+            self.im_repr_size = 768
+
         elif args.model_name in ["siglip"]:
             self.preprocess = args.preprocess
             self.im_cnn = lambda x: self.process_dinov2(x)
             self.im_backbone = im_backbone
             self.im_repr_size = 768
+
+        # Reference adsformers and prismatic
         elif args.model_name in ["fused_dinov2_siglip"]:
-            self.preprocess = args.preprocess
-            self.im_cnn = lambda x: self.process_fused(x)
+            from transformers import AutoImageProcessor
+
+            image_processor_siglip = AutoImageProcessor.from_pretrained(
+                "google/siglip-base-patch16-224"
+            )
+            image_processor_dino = AutoImageProcessor.from_pretrained(
+                "facebook/dinov2-base"
+            )
+            self.preprocess = None
+            self.im_cnn = lambda x: self.process_fused_vision(
+                x, image_processor_siglip, image_processor_dino
+            )
             self.im_backbone = im_backbone
             self.im_repr_size = 768 + 768
+
         else:
             raise "unknown model_name %s" % (args.model_name)
 
         self.create_puzzle_head(args)
 
-        if self.use_clip_text:
-            self.q_encoder, _ = clip.load("ViT-B/32", device=device)
-            self.clip_dim = 512
+        # Language backbones - frozen
+        if args.word_embed in ["siglip"]:
+            self.siglip_dim = 768
             self.q_MLP = nn.Sequential(
-                nn.Linear(self.clip_dim, self.h_sz),
-                nn.ReLU(),
+                nn.Linear(self.siglip_dim, self.h_sz),
+                get_activation_layer(args.run_baseline),
                 nn.Linear(self.h_sz, self.out_dim),
             )
         else:
-            if args.word_embed == "standard":
-                self.q_emb = nn.Embedding(len(self.vocab), self.h_sz, max_norm=1)
-                self.q_lstm = nn.LSTM(
-                    self.h_sz,
-                    self.h_sz,
-                    num_layers=2,
-                    batch_first=True,
-                    bidirectional=True,
-                )
-            else:
-                word_dim = gv.word_dim
-                self.q_emb = nn.Identity()
-                self.q_lstm = nn.GRU(
-                    word_dim,
-                    self.h_sz,
-                    num_layers=1,
-                    batch_first=True,
-                    bidirectional=True,
-                )
+            # bert and mbert
+            word_dim = gv.word_dim
+            self.q_emb = nn.Identity()
+            self.q_lstm = nn.GRU(
+                int(word_dim),
+                int(self.h_sz),
+                num_layers=1,
+                batch_first=True,
+                bidirectional=True,
+                bias=args.run_baseline,
+            )
             self.q_MLP = nn.Linear(self.h_sz * 2, self.out_dim)
 
         self.o_encoder = nn.Sequential(
             nn.Embedding(len(self.vocab), self.out_dim, max_norm=1),
             nn.Linear(self.out_dim, self.out_dim),
-            nn.ReLU(),
-        )
-        self.qv_fusion = nn.Sequential(
-            nn.Linear(self.out_dim * 2, self.out_dim),
-            nn.ReLU(),
-            nn.Linear(self.out_dim, self.out_dim),
-            nn.ReLU(),
+            get_activation_layer(args.run_baseline),
         )
 
+        if args.qf_layer:
+            composite_dim = 2 * 768 + self.args.repr_size
+            self.qv_fusion = QV_Fusion(
+                composite_dim, self.out_dim, args=self.args
+            )  # 1664
+            self.c = CLayer(dim=composite_dim, args=self.args)
+
+        else:
+            if not args.run_baseline:
+                self.qv_fusion = QV_Fusion(
+                    2 * self.out_dim, self.out_dim, args=self.args
+                )
+                self.c = CLayer(dim=2 * self.out_dim, args=self.args)
+            else:
+                self.qv_fusion = nn.Sequential(
+                    nn.Linear(self.out_dim * 2, self.out_dim),
+                    nn.ReLU(),
+                    nn.Linear(self.out_dim, self.out_dim),
+                    nn.ReLU(),
+                )
+
+        if args.qf_layer:
+            self.qf = QFLayer(num_heads=args.num_heads, args=self.args)
+
         self.create_puzzle_tail(args)
+
+    def process_dinov2(self, x):
+        x = self.decode_image(x)
+        inputs = self.preprocess(images=x, do_rescale=True, return_tensors="pt").to(
+            self.device
+        )
+        outputs = self.im_backbone(**inputs)
+        return outputs.last_hidden_state.mean(1)
+
+    def process_fused_vision(self, x, image_processor_siglip, image_processor_dino):
+        x = self.decode_image(x)
+
+        inputs_din = image_processor_dino(
+            images=x, do_rescale=True, return_tensors="pt"
+        ).to(self.device)
+        inputs_sig = image_processor_siglip(
+            images=x, do_rescale=True, return_tensors="pt"
+        ).to(self.device)
+
+        im_backbone_din, im_backbone_sig = self.im_backbone
+
+        im_backbone_din = im_backbone_din.to(self.device)
+        im_backbone_sig = im_backbone_sig.to(self.device)
+
+        outputs_din = im_backbone_din(**inputs_din)
+        outputs_sig = im_backbone_sig(**inputs_sig)
+
+        return torch.cat(
+            [
+                outputs_din.last_hidden_state.mean(1),
+                outputs_sig.last_hidden_state.mean(1),
+            ],
+            dim=1,
+        )
 
     def create_puzzle_head(self, args):
         if args.use_single_image_head:
             self.im_encoder = nn.Sequential(
-                nn.Linear(self.im_feat_size, self.out_dim),
-                nn.ReLU(),
+                nn.Linear(self.im_repr_size, self.out_dim),
+                get_activation_layer(args.run_baseline),
                 nn.Linear(self.out_dim, self.out_dim),
             )
         else:
@@ -134,8 +203,8 @@ class Puzzle_Net(nn.Module):
             for i in range(1, gv.num_puzzles + 1):
                 im_encoder.append(
                     nn.Sequential(
-                        nn.Linear(self.im_feat_size, self.out_dim),
-                        nn.ReLU(),
+                        nn.Linear(self.im_repr_size, self.out_dim),
+                        get_activation_layer(args.run_baseline),
                         nn.Linear(self.out_dim, self.out_dim),
                     )
                 )
@@ -143,32 +212,59 @@ class Puzzle_Net(nn.Module):
 
     def create_puzzle_tail(self, args):
         self.puzzle_ids = args.puzzle_ids
-        ans_decoder = [nn.Sequential(nn.Linear(self.out_dim, 1))]
+        ans_decoder = [
+            nn.Sequential(nn.Linear(self.out_dim, 1))
+        ]  # start with a dummy as we are 1-indexed wrt puzzle ids.
         if args.puzzles == "all":
             puzzles = range(1, gv.num_puzzles + 1)
         else:
             puzzles = self.puzzle_ids
         for pid in puzzles:
-            num_classes = (
-                gv.NUM_CLASSES_PER_PUZZLE[str(pid)]
-                if args.loss_type == "classifier"
-                else 1
-            )
+            num_classes = gv.NUM_CLASSES_PER_PUZZLE[str(pid)]
             if int(pid) not in gv.SEQ_PUZZLES:
-                ans_decoder.append(
-                    nn.Sequential(
-                        nn.Linear(self.out_dim, self.out_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.out_dim, self.out_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.out_dim, num_classes),
+                if not args.run_baseline:
+                    dec = PuzzleMLPDecoder(self.out_dim, num_classes)
+                    ans_decoder.append(dec)
+                else:
+                    ans_decoder.append(
+                        nn.Sequential(
+                            nn.Linear(self.out_dim, self.out_dim),
+                            nn.ReLU(),
+                            nn.Linear(self.out_dim, self.out_dim),
+                            nn.ReLU(),
+                            nn.Linear(self.out_dim, num_classes),
+                        )
                     )
-                )
             else:
-                ans_decoder.append(
-                    nn.LSTM(self.out_dim, num_classes, num_layers=1, batch_first=True)
-                )
+                if args.run_baseline:
+                    ans_decoder.append(
+                        nn.LSTM(
+                            int(self.out_dim),
+                            int(num_classes),
+                            num_layers=1,
+                            batch_first=True,
+                        )
+                    )
+
+                else:
+                    ans_decoder.append(
+                        nn.GRU(
+                            int(self.out_dim),
+                            int(num_classes),
+                            num_layers=1,
+                            batch_first=True,
+                        )
+                    )
         self.ans_decoder = nn.ModuleList(ans_decoder)
+
+    def decode_image(self, im_list):
+        """convert torch tensor images back to Image."""
+        #        im_list = (im_list +1)/2. # this is in range [0, 1].
+        im_list = (im_list.permute(0, 2, 3, 1) * 255).cpu().numpy().astype("uint8")
+        im_list = [
+            Image.fromarray(im_list[ii]) for ii in range(len(im_list))
+        ]  # convert im
+        return im_list
 
     def save_grad_hook(self):
         self.vis_grad = None
@@ -187,11 +283,9 @@ class Puzzle_Net(nn.Module):
         return fwd_hook
 
     def encode_image(self, im, pids=None):
-        if self.train_backbone:
+
+        with torch.no_grad():
             x = self.im_cnn(im).squeeze()
-        else:
-            with torch.no_grad():
-                x = self.im_cnn(im).squeeze()
 
         if len(x.shape) == 1:
             x = x.unsqueeze(0)
@@ -199,12 +293,14 @@ class Puzzle_Net(nn.Module):
         if self.use_single_image_head:
             y = self.im_encoder(x)
         else:
-            y = torch.zeros(len(im), self.out_dim).to(device)
+            y = torch.zeros(len(im), self.out_dim).to(self.device)
             for t in range(len(self.puzzle_ids)):
                 idx = pids == int(self.puzzle_ids[t])
-                idx = idx.to(device)
+                idx = idx.to(self.device)
                 if idx.sum() > 0:
-                    y[idx] = F.relu(self.im_encoder[int(self.puzzle_ids[t])](x[idx]))
+                    y[idx] = get_activation_fn(self.args.run_baseline)(
+                        self.im_encoder[int(self.puzzle_ids[t])](x[idx])
+                    )
 
         return y
 
@@ -223,37 +319,46 @@ class Puzzle_Net(nn.Module):
         return text
 
     def encode_text(self, text):
-        if self.word_embed == "standard":
-            x = self.q_emb(text)
-            x, (h, _) = self.q_lstm(x.float())
-            x = F.relu(self.q_MLP(x.mean(1)))
-        elif self.word_embed == "bert":
+        if self.word_embed in ["mbert", "bert"]:
             text = self.decode_text(text)
-            q_enc = torch.zeros(len(text), gv.max_qlen, gv.word_dim).to(device)
+            q_enc = torch.zeros(len(text), gv.max_qlen, gv.word_dim).to(self.device)
             for ii, tt in enumerate(text):
-                q_feat = gv.word_embed(tt)
-                q_enc[ii, : min(gv.max_qlen, len(q_feat)), :] = q_feat
+                q_repr = gv.word_embed(tt)
+                q_enc[ii, : min(gv.max_qlen, len(q_repr)), :] = q_repr
             x, (h, _) = self.q_lstm(q_enc.float())
-            x = F.relu(self.q_MLP(x.mean(1)))
-        else:
-            x = gv.word_embed(text)
+            x = get_activation_fn(self.args.run_baseline)(self.q_MLP(x.mean(1)))
 
-        return x
+        elif self.word_embed in ["siglip"]:
 
-    def seq_decoder(self, decoder, feat):
+            text = self.decode_text(text)
+            # An encoded seq of tokens for mha in qf layer
+            if self.args.qf_layer:
+                q_enc = torch.zeros(len(text), gv.max_qlen, gv.word_dim).to(self.device)
+                for ii, tt in enumerate(text):
+                    q_repr = gv.word_embed(tt)
+                    q_enc[ii, : min(gv.max_qlen, len(q_repr)), :] = q_repr
+
+            else:
+                # as siglip encodes the sequence
+                x = gv.word_embed(text)
+                x = get_activation_fn(self.args.run_baseline)(self.q_MLP(x))
+
+        return q_enc.float() if self.args.qf_layer else x
+
+    def seq_decoder(self, decoder, repr):
         """run the LSTM decoder sequentially for k steps"""
         out = [None] * gv.MAX_DECODE_STEPS
         hx = None
-        for k in range(gv.MAX_DECODE_STEPS):
+        for k in range(int(gv.MAX_DECODE_STEPS)):
             try:
-                out[k], hx = decoder(feat, hx)
+                out[k], hx = decoder(repr, hx)
             except:
                 pdb.set_trace()
         return out
 
-    def decode_individual_puzzles(self, feat, pids):
+    def decode_individual_puzzles(self, repr, pids):
         upids = torch.unique(pids)
-        out_feats = {}
+        out_reprs = {}
         for t in range(len(upids)):
             idx = pids == upids[t]
             key = str(upids[t].item())
@@ -261,20 +366,30 @@ class Puzzle_Net(nn.Module):
                 np.where(int(key) == np.array(self.sorted_puzzle_ids))[0][0] + 1
             )  # +1 because we use 1-indexed.
             if upids[t] not in gv.SEQ_PUZZLES:
-                out_feats[int(key)] = self.ans_decoder[key_idx](feat[idx])
+                out_reprs[int(key)] = self.ans_decoder[key_idx](repr[idx])
             else:
-                out_feats[int(key)] = self.seq_decoder(
-                    self.ans_decoder[key_idx], feat[idx]
+                out_reprs[int(key)] = self.seq_decoder(
+                    self.ans_decoder[key_idx], repr[idx]
                 )
-        return out_feats
+        return out_reprs
 
     def forward(self, im, q=None, puzzle_ids=None):
-        im_feat = self.encode_image(im, puzzle_ids)
-        q_feat = self.encode_text(q)
-        qv_feat = self.qv_fusion(torch.cat([im_feat, q_feat], dim=1))
+        q_repr = self.encode_text(q)
+        im_repr = self.encode_image(im.float(), puzzle_ids).float()
 
-        qvo_feat = self.decode_individual_puzzles(qv_feat, puzzle_ids)
-        return qvo_feat
+        if not self.args.run_baseline:
+            if self.args.qf_layer:
+                qf_out = self.qf(im_repr, q_repr)
+                qv_repr = self.qv_fusion(self.c([im_repr, q_repr.mean(1), qf_out]))
+            else:
+                qv_repr = self.qv_fusion(self.c([im_repr, q_repr]))
+
+            qvo_repr = self.decode_individual_puzzles(qv_repr, puzzle_ids)
+            return qvo_repr
+        else:
+            qv_feat = self.qv_fusion(torch.cat([im_repr, q_repr], dim=1))
+            qvo_feat = self.decode_individual_puzzles(qv_feat, puzzle_ids)
+            return qvo_feat
 
 
 def load_pretrained_models(args, model_name, model=None):
@@ -290,217 +405,107 @@ def load_pretrained_models(args, model_name, model=None):
         return
 
     preprocess = None
-    if args.model_name in ["resnet18"]:
-        model = tmodels.__dict__[args.model_name](pretrained=True)
 
-    elif args.model_name in ["resnet50"]:
+    if args.model_name in ["resnet50"]:
         from torchvision.models import ResNet50_Weights, resnet50
 
         weights = ResNet50_Weights.DEFAULT
         model = resnet50(weights=weights)
         preprocess = weights.transforms()
-    elif args.model_name == "clip":
-        model, preprocess = clip.load("ViT-B/32", device="cuda")
+        # Make sure image backbone is frozen
+        print(
+            f"\n Number trainable params before explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+        for param in model.parameters():
 
+            param.requires_grad = False
+
+        print(
+            f"\n Number trainable params after explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+
+    elif args.model_name == "dinov2":
+        from transformers import AutoImageProcessor, Dinov2Model
+
+        image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+        model = Dinov2Model.from_pretrained("facebook/dinov2-base")
+        preprocess = image_processor
+        print(
+            f"\n Number trainable params before explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+        for param in model.parameters():
+
+            param.requires_grad = False
+
+        print(
+            f"\n Number trainable params after explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+
+    elif args.model_name == "siglip":
+        from transformers import (
+            AutoImageProcessor,
+            SiglipVisionModel,
+        )
+
+        image_processor = AutoImageProcessor.from_pretrained(
+            "google/siglip-base-patch16-224"
+        )
+        model = SiglipVisionModel.from_pretrained("google/siglip-base-patch16-224")
+        preprocess = image_processor
+        print(
+            f"\n Number trainable params before explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+        for param in model.parameters():
+
+            param.requires_grad = False
+
+        print(
+            f"\n Number trainable params after explicit freezing of image backb  {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+        )
+
+    elif args.model_name == "fused_dinov2_siglip":
+        from transformers import AutoImageProcessor, SiglipVisionModel, Dinov2Model
+
+        model_siglip = SiglipVisionModel.from_pretrained(
+            "google/siglip-base-patch16-224"
+        )
+        print(
+            f"\n Number trainable params before explicit freezing of image backb  {sum(p.numel() for p in model_siglip.parameters() if p.requires_grad)}"
+        )
+        for param in model_siglip.parameters():
+
+            param.requires_grad = False
+
+        print(
+            f"\n Number trainable params after explicit freezing of image backb  {sum(p.numel() for p in model_siglip.parameters() if p.requires_grad)}"
+        )
+        model_dino = Dinov2Model.from_pretrained("facebook/dinov2-base")
+        model = (model_dino, model_siglip)
+        preprocess = None
     else:
         print("model name is %s: not loading pre-trained model." % (args.model_name))
 
+    if args.pretrained:
+        if os.path.isfile(args.pretrained):
+            print("=> loading checkpoint '{}'".format(args.pretrained))
+            checkpoint = torch.load(args.pretrained, map_location="cpu")
+
+            # rename moco pre-trained keys
+            state_dict = checkpoint["state_dict"]
+            for k in list(state_dict.keys()):
+                # retain only encoder up to before the embedding layer
+                if k.startswith("module.encoder") and not k.startswith(
+                    "module.encoder.fc"
+                ):
+                    # remove prefix
+                    state_dict[k[len("module.encoder.") :]] = state_dict[k]
+                # delete renamed or unused k
+                del state_dict[k]
+
+            msg = model.load_state_dict(state_dict, strict=False)
+            assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+
+            print("=> loaded pre-trained model '{}'".format(args.pretrained))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.pretrained))
     return model, preprocess
-
-
-class Puzzle_CLIP_Net(nn.Module):
-    def __init__(self, args, VL_backbone):
-        super(Puzzle_CLIP_Net, self).__init__()
-        vocab_path = args.vocab_path
-        with open(vocab_path, "rb") as f:
-            self.vocab = pickle.load(f)
-
-        self.num_opts = 5
-        self.out_dim = args.feat_size
-        self.h_sz = 256
-        self.feat_size = 512
-        self.dummy_question = None
-        self.model_name = args.model_name
-        self.use_clip_text = args.use_clip_text
-        self.loss_type = args.loss_type
-        self.monolithic = args.monolithic
-        self.use_single_image_head = args.use_single_image_head
-        self.train_backbone = args.train_backbone
-        self.sorted_puzzle_ids = np.sort(np.array([int(ii) for ii in args.puzzle_ids]))
-
-        if args.loss_type == "classifier" or args.loss_type == "puzzle_tails":
-            self.max_val = gv.MAX_VAL + 1
-        elif args.loss_type == "regression":
-            self.max_val = 1
-
-        self.preprocess = args.preprocess
-        self.VL_backbone = VL_backbone
-        self.create_puzzle_head(args)
-
-        self.q_MLP = nn.Sequential(
-            nn.Linear(self.feat_size, self.h_sz),
-            nn.ReLU(),
-            nn.Linear(self.h_sz, self.out_dim),
-            nn.ReLU(),
-        )
-
-        self.qv_fusion = nn.Sequential(
-            nn.Linear(self.out_dim * 2, self.out_dim),
-            nn.ReLU(),
-            nn.Linear(self.out_dim, self.out_dim),
-            nn.ReLU(),
-        )
-
-        self.create_puzzle_tail(args)
-
-    def create_puzzle_head(self, args):
-        if args.use_single_image_head:
-            self.im_encoder = nn.Sequential(
-                nn.Linear(self.feat_size, self.out_dim),
-                nn.ReLU(),
-                nn.Linear(self.out_dim, self.out_dim),
-            )
-        else:
-            self.puzzle_ids = args.puzzle_ids
-            im_encoder = [nn.Sequential(nn.Linear(self.out_dim, 1))]
-            for i in range(1, gv.num_puzzles + 1):
-                im_encoder.append(
-                    nn.Sequential(
-                        nn.Linear(self.feat_size, self.out_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.out_dim, self.out_dim),
-                    )
-                )
-            self.im_encoder = nn.ModuleList(im_encoder)
-
-    def create_puzzle_tail(self, args):
-        self.puzzle_ids = args.puzzle_ids
-        ans_decoder = [
-            nn.Sequential(nn.Linear(self.out_dim, 1))
-        ]  # start with a dummy as we are 1-indexed wrt puzzle ids.
-        if args.puzzles == "all":
-            puzzles = range(1, gv.num_puzzles + 1)
-        else:
-            puzzles = self.puzzle_ids
-        for pid in puzzles:  # self.puzzle_ids:
-            num_classes = (
-                gv.NUM_CLASSES_PER_PUZZLE[str(pid)]
-                if args.loss_type == "classifier"
-                else 1
-            )
-            if int(pid) not in gv.SEQ_PUZZLES:
-                ans_decoder.append(
-                    nn.Sequential(
-                        nn.Linear(self.out_dim, self.out_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.out_dim, self.out_dim),
-                        nn.ReLU(),
-                        nn.Linear(self.out_dim, num_classes),
-                    )
-                )
-            else:
-                ans_decoder.append(
-                    nn.LSTM(self.out_dim, num_classes, num_layers=1, batch_first=True)
-                )
-        self.ans_decoder = nn.ModuleList(ans_decoder)
-
-    def process_dinov2(self, x):
-        device = torch.device("cuda")
-        inputs = self.preprocess(images=x, do_rescale=False, return_tensors="pt").to(
-            device
-        )
-        with torch.no_grad():
-            outputs = self.im_backbone(**inputs)
-        return outputs.last_hidden_state.mean(1)
-
-    def process_MAE(self, x):
-        x = self.decode_image(x)
-        inputs = self.preprocess(images=x, return_tensors="pt").to("cuda")
-        outputs = self.im_backbone(**inputs)
-        return outputs.last_hidden_state.mean(1)
-
-    def process(self, im, q_text):
-        q_text = self.decode_text(q_text)
-        text = clip.tokenize(q_text, truncate=True).to("cuda")
-        return im, text
-
-    def encode_image(self, im_feat, pids=None):
-        if self.use_single_image_head:
-            y = self.im_encoder(im_feat)
-        else:
-            y = torch.zeros(len(im_feat), self.out_dim).cuda()
-            for t in range(len(self.puzzle_ids)):
-                idx = pids == int(self.puzzle_ids[t])
-                idx = idx.cuda()
-                if idx.sum() > 0:
-                    y[idx] = F.relu(
-                        self.im_encoder[int(self.puzzle_ids[t])](im_feat[idx])
-                    )
-        return y
-
-    def encode_text(self, q_feat):
-        x = F.relu(self.q_MLP(q_feat))
-        return x
-
-    def decode_image(self, im_list):
-        pass
-
-    def decode_text(self, text):
-        get_range = lambda x: range(1, x) if x < 70 else range(x - 70 + 4, x)
-        tt = text.cpu()
-        text = [
-            " ".join(
-                [
-                    self.vocab.idx2word[int(j)]
-                    for j in tt[i][get_range(torch.nonzero(tt[i])[-1])]
-                ]
-            )
-            for i in range(len(tt))
-        ]
-        return text
-
-    def seq_decoder(self, decoder, feat):
-        """run the LSTM decoder sequentially for k steps"""
-        out = [None] * gv.MAX_DECODE_STEPS
-        hx = None
-        for k in range(gv.MAX_DECODE_STEPS):
-            try:
-                out[k], hx = decoder(feat, hx)
-            except:
-                pdb.set_trace()
-        return out
-
-    def decode_individual_puzzles(self, feat, pids):
-        upids = torch.unique(pids)
-        out_feats = {}
-        for t in range(len(upids)):
-            idx = pids == upids[t]
-            key = str(upids[t].item())
-            key_idx = (
-                np.where(int(key) == np.array(self.sorted_puzzle_ids))[0][0] + 1
-            )  # +1 because we use 1-indexed.
-            if upids[t] not in gv.SEQ_PUZZLES:
-                out_feats[int(key)] = self.ans_decoder[key_idx](feat[idx])
-            else:
-                out_feats[int(key)] = self.seq_decoder(
-                    self.ans_decoder[key_idx], feat[idx]
-                )
-        return out_feats
-
-    def forward(self, im, q=None, puzzle_ids=None):
-        im, text = self.process(im, q)
-        with torch.no_grad():
-            im_feat = self.VL_backbone.encode_image(im)
-            q_feat = self.VL_backbone.encode_text(text)
-
-        im_feat = self.encode_image(im_feat.float(), puzzle_ids)
-        q_feat = self.encode_text(q_feat.float())
-        qv_feat = self.qv_fusion(torch.cat([im_feat, q_feat], dim=1))
-
-        if self.monolithic:
-            qv_feat = qv_feat.unsqueeze(1)
-            qvo_feat = self.qvo_fusion(qv_feat).squeeze()
-        else:
-            qvo_feat = self.decode_individual_puzzles(qv_feat, puzzle_ids)
-
-        return qvo_feat
