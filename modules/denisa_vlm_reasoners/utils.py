@@ -1,4 +1,4 @@
-
+# Minimally edited from https://github.com/merlresearch/SMART
 import json
 import os
 import os.path as osp
@@ -6,29 +6,13 @@ import pdb
 import pickle as pkl
 import sys
 
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from PIL import Image
 
-import modules.denisa_vlm_reasoners.text_encoder as gv
-
-
-def reset_state(args):
-    #    global seed
-    gv.seed = np.random.randint(10000) if args.seed == -1 else args.seed
-    args.seed = gv.seed
-    manualSeed = gv.seed  #
-    np.random.seed(manualSeed)
-    torch.manual_seed(manualSeed)
-    torch.cuda.manual_seed(manualSeed)
-    torch.cuda.manual_seed_all(manualSeed)
-    torch.backends.cudnn.deterministic = True
-    # added
-    torch.manual_seed(manualSeed)
-    np.random.seed(manualSeed)
-    random.seed(manualSeed)
-    print("seed = %d" % (gv.seed))
+import text_encoder as gv
 
 
 def fix_acc(acc_list):
@@ -52,26 +36,37 @@ def get_icon_dataset_classes(icon_path):
 
 
 def print_puzz_acc(args, puzz_acc, log=True):
+    class_avg_perf = {}
     to_int = lambda x: np.array(list(x)).astype("int")
-    cls_mean = lambda x, idx, pids: np.array([x[int(ii)] for ii in idx]).sum() / len(
-        set(to_int(idx)).intersection(set(to_int(pids)))
+    cls_mean = lambda x, idx, pids: np.array([x[int(ii)] for ii in idx]).sum() / max(
+        len(set(to_int(idx)).intersection(set(to_int(pids)))), 1
+    )  # fix nan
+
+    acc_list = np.zeros(
+        gv.num_puzzles + 1,
     )
-    acc_list = np.zeros(gv.num_puzzles + 1,)
-    opt_acc_list = np.zeros(gv.num_puzzles + 1,)
+    opt_acc_list = np.zeros(
+        gv.num_puzzles + 1,
+    )
 
     if not os.path.exists(os.path.join(args.save_root, "results/%d/" % (gv.seed))):
         os.makedirs(os.path.join(args.save_root, "results/%d/" % (gv.seed)))
 
-    if len(puzz_acc.keys()) > 10:
+    if len(puzz_acc.keys()) >= 3:
         for k, key in enumerate(puzz_acc.keys()):
-            acc = 100.0 * puzz_acc[key][0] / puzz_acc[key][2]
-            oacc = 100.0 * puzz_acc[key][1] / puzz_acc[key][2]
+            acc = (
+                100.0 * puzz_acc[key][0] / puzz_acc[key][2] if puzz_acc[key][2] else 0.0
+            )
+            oacc = (
+                100.0 * puzz_acc[key][1] / puzz_acc[key][2] if puzz_acc[key][2] else 0.0
+            )
             acc_list[int(key)] = acc
             opt_acc_list[int(key)] = oacc
         if log:
+
             for t in range(1, gv.num_puzzles + 1):
                 print(
-                    "%d opt_acc=%0.2f acc=%0.2f" % (t, opt_acc_list[t], acc_list[t]),
+                    "%d acc=%0.2f" % (t, acc_list[t]),
                     end="\t",
                 )
                 if t % 5 == 0:
@@ -90,6 +85,8 @@ def print_puzz_acc(args, puzz_acc, log=True):
                 "spatial",
                 "pattern",
             ]
+
+            print("Class accuracy: ")
             print(classes)
             for kk in classes:
                 idx_list = puzzles[kk]
@@ -98,61 +95,21 @@ def print_puzz_acc(args, puzz_acc, log=True):
                     cls_mean(opt_acc_list, idx_list, list(puzz_acc.keys())),
                 )
                 print(
-                    "%0.1f/%0.1f & " % (class_avg_perf[kk][0], class_avg_perf[kk][1]),
+                    "%0.1f & " % (class_avg_perf[kk][0]),
                     end=" ",
                 )
             print("\n\n")
 
-        fig = plt.figure(figsize=(30, 4))
-        ax = plt.gca()
-        ax.bar(np.arange(1, gv.num_actual_puzz), fix_acc(acc_list[1:]))
-        ax.set_xticks(np.arange(1, gv.num_actual_puzz))
-        ax.set_xlabel("puzzle ids", fontsize=16)
-        ax.set_ylabel("$O_{acc}$ %", fontsize=20)
-        fig.tight_layout()
-        plt.savefig(
-            os.path.join(args.save_root, "results/%d/acc_perf_scores_1.png" % (gv.seed))
-        )
-        plt.close()
-
-        fig = plt.figure(figsize=(30, 4))
-        ax = plt.gca()
-        ax.bar(np.arange(1, gv.num_actual_puzz), fix_acc(opt_acc_list[1:]))
-        ax.set_xticks(
-            np.arange(1, gv.num_actual_puzz)
-        )  # , [str(i) for i in np.arange(1,num_puzzles+1)])
-        ax.set_xlabel("puzzle ids", fontsize=16)
-        ax.set_ylabel("$S_{acc}$ %", fontsize=20)
-        fig.tight_layout()
-        plt.savefig(
-            os.path.join(
-                args.save_root, "results/%d/opt_acc_perf_scores_1.png" % (gv.seed)
-            )
-        )
-        plt.close()
     else:
         for key in puzz_acc.keys():
             acc = 100.0 * puzz_acc[key][0] / puzz_acc[key][2]
             opt_acc = 100.0 * puzz_acc[key][1] / puzz_acc[key][2]
             if log:
-                print("%s opt_acc=%0.2f acc=%0.2f" % (key, opt_acc, acc))
+                print("%s acc=%0.2f" % (key, acc))
             acc_list[int(key)] = acc
             opt_acc_list[int(key)] = opt_acc
 
-        plt.figure()
-        plt.bar(np.arange(gv.num_puzzles + 1), acc_list)
-        plt.savefig(
-            os.path.join(args.save_root, "results/%d/acc_perf_scores.png" % (gv.seed))
-        )
-        plt.close()
-        plt.figure()
-        plt.bar(np.arange(gv.num_puzzles + 1), opt_acc_list)
-        plt.savefig(
-            os.path.join(
-                args.save_root, "results/%d/opt_acc_perf_scores.png" % (gv.seed)
-            )
-        )
-        plt.close()
+    return class_avg_perf if class_avg_perf else {}
 
 
 def get_option_sel_acc(pred_ans, opts, answer, answer_values, pid):
@@ -223,7 +180,13 @@ def pad_with_max_val(gt_list, val):
     """if the number of elements in gt is less than MAX_DECODE_STEPS, we pad it with the max value in a class"""
     if len(gt_list) < gv.MAX_DECODE_STEPS:
         gt_list = (
-            gt_list + (np.ones(gv.MAX_DECODE_STEPS - len(gt_list),) * val).tolist()
+            gt_list
+            + (
+                np.ones(
+                    gv.MAX_DECODE_STEPS - len(gt_list),
+                )
+                * val
+            ).tolist()
         )
     return gt_list
 
@@ -389,13 +352,6 @@ class Logger(object):
         pass
 
 
-def set_gpu_devices(gpu_id):
-    gpu = ""
-    if gpu_id != -1:
-        gpu = str(gpu_id)
-    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
-
-
 def load_file(filename):
     """
     load obj from filename
@@ -475,7 +431,6 @@ def get_puzzle_ids(args):
         sorted_puzzle_ids = np.sort(np.array([int(ii) for ii in puzzle_ids]))
         puzzle_ids = [str(ii) for ii in sorted_puzzle_ids]
         puzzle_ids_str = "_".join(puzzle_ids)
-
 
     return puzzle_ids_str, puzzle_ids
 
