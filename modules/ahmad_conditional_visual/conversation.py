@@ -379,8 +379,8 @@ conv_tcv_phi3 = Conversation(
     roles=("<|user|>\n", "<|assistant|>\n"),
     messages=(
     ),
-    offset=0,
-    sep_style=SeparatorStyle.SINGLE,
+    offset=2,
+    sep_style=SeparatorStyle.MPT,
     sep="<|end|>\n",
     version="tcv_phi3",
 )

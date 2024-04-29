@@ -113,9 +113,11 @@ class TCVModel(CLIPPreTrainedModel):
         super().__init__(config)
         
         if isinstance(config.text_config, dict):
-            self.text_model = BertModel.from_pretrained(BertConfig.from_dict(config.text_config)._name_or_path)
+            self.text_model = BertModel.from_pretrained(BertConfig.from_dict(config.text_config)._name_or_path,
+                                                        trust_remote_code = True)
         else:
-            self.text_model = BertModel.from_pretrained(config.text_config._name_or_path)
+            self.text_model = BertModel.from_pretrained(config.text_config._name_or_path,
+                                                        trust_remote_code = True)
             
         if isinstance(config.projector_config, dict):  
             self.text_projection = build_projector(ProjectorConfig.from_dict(config.projector_config))
@@ -123,11 +125,15 @@ class TCVModel(CLIPPreTrainedModel):
             self.text_projection = build_projector(config.projector_config)
         
         if isinstance(config.vision_config, dict):  
-            self.vision_model = CLIPTextConditionedVisionModel.from_pretrained(CLIPVisionConfig.from_dict(config.vision_config)._name_or_path)
-            self.image_processor = CLIPImageProcessor.from_pretrained(CLIPVisionConfig.from_dict(config.vision_config)._name_or_path)
+            self.vision_model = CLIPTextConditionedVisionModel.from_pretrained(CLIPVisionConfig.from_dict(config.vision_config)._name_or_path,
+                                                                               trust_remote_code = True)
+            self.image_processor = CLIPImageProcessor.from_pretrained(CLIPVisionConfig.from_dict(config.vision_config)._name_or_path,
+                                                                      trust_remote_code = True)
         else:
-            self.vision_model = CLIPTextConditionedVisionModel.from_pretrained(config.vision_config._name_or_path)
-            self.image_processor = CLIPImageProcessor.from_pretrained(config.vision_config._name_or_path)
+            self.vision_model = CLIPTextConditionedVisionModel.from_pretrained(config.vision_config._name_or_path,
+                                                                               trust_remote_code = True)
+            self.image_processor = CLIPImageProcessor.from_pretrained(config.vision_config._name_or_path,
+                                                                      trust_remote_code = True)
             
                   
     def forward(
@@ -155,7 +161,7 @@ class TCVModel(CLIPPreTrainedModel):
             attention_mask=attention_mask,
             position_ids=position_ids,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
+            output_hidden_states=True,
             return_dict=return_dict,
         )
         
@@ -189,14 +195,17 @@ class TCVModel(CLIPPreTrainedModel):
 class TCVForCausalLM(PreTrainedModel):
     config_class = TCVForCausalLMConfig
 
-    def __init__(self, config : TCVLlamaConfig, **kwargs):
+    def __init__(self, config : TCVForCausalLMConfig, **kwargs):
         super().__init__(config,  **kwargs)
         
         if isinstance(config.llm_config, dict):
             self.llm = AutoModelForCausalLM.from_pretrained(config.llm_config['_name_or_path'],
-                                                        attn_implementation="flash_attention_2")
+                                                            attn_implementation="flash_attention_2",
+                                                            trust_remote_code = True)
         else:
-            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_config._name_or_path)
+            self.llm = AutoModelForCausalLM.from_pretrained(config.llm_config._name_or_path,
+                                                            attn_implementation="flash_attention_2",
+                                                            trust_remote_code = True)
             
         if isinstance(config.tcv_config, dict): #TODO : Shoudl we also do from pretrained or not ? 
             self.tcv = TCVModel(TCVConfig.from_dict(config.tcv_config))
@@ -464,12 +473,12 @@ class TCVForCausalLM(PreTrainedModel):
         
         return llm, vision_model
 
-    def save_pretrained(self, **kwargs):
+    def save_pretrained(self, *args, **kwargs):
         
         if self.is_peft_wrapped:
             self.llm, self.tcv.vision_model = self.get_unwrapped()
         
-        super().save_pretrained(**kwargs)
+        super().save_pretrained(*args, **kwargs)
             
     @torch.no_grad()
     def generate(

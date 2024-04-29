@@ -33,12 +33,12 @@ class TCVConfig(PretrainedConfig):
         if text_config:
             self.text_config = text_config
         else:
-            self.text_config = AutoConfig.from_pretrained(text_model_name)
+            self.text_config = AutoConfig.from_pretrained(text_model_name, trust_remote_code = True)
             
         if vision_config:
             self.vision_config = vision_config
         else:
-            self.vision_config = CLIPVisionConfig.from_pretrained(vision_model_name)
+            self.vision_config = CLIPVisionConfig.from_pretrained(vision_model_name, trust_remote_code = True)
             self.vision_config._name_or_path = vision_model_name
             
         if projector_config :
@@ -73,7 +73,7 @@ class TCVForCausalLMConfig(PretrainedConfig):
         if llm_config : 
             self.llm_config =  llm_config
         else:
-            self.llm_config =  AutoConfig.from_pretrained(llm_model_name)
+            self.llm_config =  AutoConfig.from_pretrained(llm_model_name, trust_remote_code = True)
             
         if tcv_config: 
             self.tcv_config =  tcv_config

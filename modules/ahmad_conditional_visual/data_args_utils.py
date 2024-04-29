@@ -13,9 +13,68 @@ import copy
 import torch
 import conversation as conversation_lib
 
-conversation_lib.default_conversation = conversation_lib.conv_templates["llava_llama_2"]
+conversation_lib.default_conversation = conversation_lib.conv_templates["tcv_phi3"]
 
+@dataclass
+class ModelArguments:
+    
+    llm_model_name: Optional[str] = field(default="meta-llama/Llama-2-7b-chat-hf")
+    version: Optional[str] = field(default="plain") #TODO we can remove too
 
+    tcv_vit_name: Optional[str] = field(default="openai/clip-vit-large-patch14-336")
+    tcv_vit_select_layer: Optional[int] = field(default=-2)   # default to the last layer
+    tcv_vit_select_feature: Optional[str] = field(default="patch")
+    
+    tcv_text_encoder_name: Optional[str] = field(default="google-bert/bert-base-uncased") # Shapiro
+    tcv_text_select_layer: Optional[int] = field(default=-2)   # default to the last layer
+    tcv_text_select_feature: Optional[str] = field(default="all") #pool
+    
+    tcv_text_to_vit_projector_type: Optional[str] = field(default='mlp2x_gelu') # Shapiro
+    vit_to_llm_projector_type: Optional[str] = field(default='mlp2x_gelu')
+
+    
+@dataclass
+class TrainingArguments(transformers.TrainingArguments):
+    cache_dir: Optional[str] = field(default=None)
+    optim: str = field(default="adamw_torch")
+    remove_unused_columns: bool = field(default=False)
+
+    model_max_length: int = field(
+        default=512,
+        metadata={
+            "help":
+            "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
+        },
+    )
+    
+    llm_dora_enable: bool = True
+    llm_lora_r: int = 128
+    llm_lora_alpha: int = 256
+    llm_lora_dropout: float = 0.05
+    llm_lora_weight_path: str = ""
+    llm_lora_bias: str = "none"
+    
+    vit_dora_enable: bool = True 
+    vit_lora_enable: bool = False
+    vit_lora_r: int = 128
+    vit_lora_alpha: int = 128
+    vit_lora_dropout: float = 0.05
+    vit_lora_weight_path: str = ""
+    vit_lora_bias: str = "none"
+    
+    projectors_lr: Optional[float] = 2e-5
+    group_by_modality_length: bool = field(default=True)
+    
+@dataclass
+class DataArguments:
+    data_path: str = field(default=None,
+                           metadata={"help": "Path to the training data."})
+    lazy_preprocess: bool = False
+    is_multimodal: bool = True
+    image_folder: Optional[str] = field(default=None)
+    image_aspect_ratio: str = 'pad'
+    
+    
 class LazySupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
 
@@ -24,7 +83,7 @@ class LazySupervisedDataset(Dataset):
                  data_args: DataArguments,
                  vit_text_tokenizer: transformers.PreTrainedTokenizer):
         super(LazySupervisedDataset, self).__init__()
-        list_data_dict = json.load(open(data_path, "r"))
+        list_data_dict = json.load(open(data_path, "r")) #Change me
 
         print("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
@@ -84,7 +143,7 @@ class LazySupervisedDataset(Dataset):
                 self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
-        data_dict = preprocess_llama_2(
+        data_dict = preprocess_phi3(
             sources,
             self.tokenizer,
             has_image=('image' in self.list_data_dict[i]))
@@ -154,66 +213,7 @@ class DataCollatorForSupervisedDataset(object):
         return batch
     
     
-@dataclass
-class ModelArguments:
-    
-    model_name_or_path: Optional[str] = field(default="meta-llama/Llama-2-7b-chat-hf")
-    version: Optional[str] = field(default="plain") #TODO we can remove too
 
-    tcv_vit_name: Optional[str] = field(default="openai/clip-vit-large-patch14-336")
-    tcv_vit_select_layer: Optional[int] = field(default=-2)   # default to the last layer
-    tcv_vit_select_feature: Optional[str] = field(default="patch")
-    
-    tcv_text_encoder_name: Optional[str] = field(default="google-bert/bert-base-uncased") # Shapiro
-    tcv_text_select_layer: Optional[int] = field(default=-2)   # default to the last layer
-    tcv_text_select_feature: Optional[str] = field(default="all") #pool
-    
-    tcv_text_to_vit_projector_type: Optional[str] = field(default='mlp2x_gelu') # Shapiro
-    vit_to_llm_projector_type: Optional[str] = field(default='mlp2x_gelu')
-
-    
-@dataclass
-class TrainingArguments(transformers.TrainingArguments):
-    cache_dir: Optional[str] = field(default=None)
-    optim: str = field(default="adamw_torch")
-    remove_unused_columns: bool = field(default=False)
-
-    model_max_length: int = field(
-        default=512,
-        metadata={
-            "help":
-            "Maximum sequence length. Sequences will be right padded (and possibly truncated)."
-        },
-    )
-    
-    llm_dora_enable: bool = True
-    llm_lora_r: int = 128
-    llm_lora_alpha: int = 256
-    llm_lora_dropout: float = 0.05
-    llm_lora_weight_path: str = ""
-    llm_lora_bias: str = "none"
-    
-    vit_dora_enable: bool = True 
-    vit_lora_enable: bool = False
-    vit_lora_r: int = 128
-    vit_lora_alpha: int = 128
-    vit_lora_dropout: float = 0.05
-    vit_lora_weight_path: str = ""
-    vit_lora_bias: str = "none"
-    
-    projector_lr: Optional[float] = 2e-5
-    group_by_modality_length: bool = field(default=True)
-    
-@dataclass
-class DataArguments:
-    data_path: str = field(default=None,
-                           metadata={"help": "Path to the training data."})
-    lazy_preprocess: bool = False
-    is_multimodal: bool = True
-    image_folder: Optional[str] = field(default=None)
-    image_aspect_ratio: str = 'pad'
-    
-    
     
 def find_all_linear_names(model):
     cls = torch.nn.Linear
@@ -266,45 +266,6 @@ def preprocess_phi3(
         ).input_ids
 
     targets = input_ids.clone()
-
-    assert conv.sep_style == conversation_lib.SeparatorStyle.LLAMA_2
-
-    # Mask targets
-    sep = "[/INST] "
-    for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
-        rounds = conversation.split(conv.sep2)
-        cur_len = 1
-        target[:cur_len] = IGNORE_INDEX
-        for i, rou in enumerate(rounds):
-            if rou == "":
-                break
-
-            parts = rou.split(sep)
-            if len(parts) != 2:
-                break
-            parts[0] += sep
-
-            if has_image:
-                round_len = len(tokenizer_image_token(rou, tokenizer))
-                instruction_len = len(tokenizer_image_token(parts[0], tokenizer)) - 2
-            else:
-                round_len = len(tokenizer(rou).input_ids)
-                instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-
-            target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
-
-            cur_len += round_len
-        target[cur_len:] = IGNORE_INDEX
-
-        if cur_len < tokenizer.model_max_length:
-            if cur_len != total_len:
-                target[:] = IGNORE_INDEX
-                print(
-                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
-                    f" (ignored)"
-                )
 
     return dict(
         input_ids=input_ids,
