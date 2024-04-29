@@ -476,9 +476,13 @@ class TCVForCausalLM(PreTrainedModel):
     def save_pretrained(self, *args, **kwargs):
         
         if self.is_peft_wrapped:
+            peft_llm , peft_vision = self.llm, self.tcv.vision_model
             self.llm, self.tcv.vision_model = self.get_unwrapped()
         
         super().save_pretrained(*args, **kwargs)
+        
+        if self.is_peft_wrapped:
+            self.llm, self.tcv.vision_model = peft_llm , peft_vision
             
     @torch.no_grad()
     def generate(

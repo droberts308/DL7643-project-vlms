@@ -26,19 +26,19 @@ torchrun --standalone --nnodes=1 --nproc-per-node=4 /home/shapiro/experiments/pl
     --bf16 True \
     --output_dir "/home/shapiro/experiments/playground/dl-project/DL7643-project-vlms/modules/ahmad_conditional_visual/ckpts/phi-3b-dora" \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 3 \
+    --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 0.5 \
-    --save_total_limit 2 \
+    --save_steps 0.25 \
+    --save_total_limit 5 \
     --learning_rate 2e-4 \
     --projectors_lr 2e-5 \
     --weight_decay 0. \
     --warmup_ratio 0.03 \
     --lr_scheduler_type "cosine" \
-    --logging_steps 1 \
+    --logging_steps 10 \
     --tf32 True \
     --gradient_checkpointing  False \
     --dataloader_num_workers 4 \
