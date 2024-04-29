@@ -1,7 +1,6 @@
 # Code implementing ahmad's path on text aware visual features
+
 ## Instructions to replicate
-
-
 
 1. Install Packages
 
@@ -44,3 +43,22 @@ sh ./scripts/tcv/eval_mmvet.sh
 
 Mine and LLava's Results are available at `./modules/ahmad_conditional_visual/eval/mmvet/results/`
 My results are under the following wild card `./modules/ahmad_conditional_visual/eval/mmvet/results/TCV_phi3*`
+
+
+## Loading Model
+
+Checkpoint can be found at my personal huggingface [page](https://huggingface.co/AhmadShapiro/tcv-phi3)
+To load the model, you can do the following
+
+```python
+
+from model_arch import TCVForCausalLM
+
+model = TCVForCausalLM.from_pretrained("AhmadShapiro/tcv-phi3")
+image_processor = model.tcv.image_processor
+llm_tokenizer = AutoTokenizer.from_pretrained(model_path)
+vit_tokenizer = AutoTokenizer.from_pretrained(model.config.tcv_config['text_config']['_name_or_path'])
+
+```
+To infere you can follow the logic in `./modules/ahmad_conditional_visual/eval_vqa.py`
+
