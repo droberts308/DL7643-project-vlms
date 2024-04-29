@@ -515,14 +515,14 @@ class TCVForCausalLM(PreTrainedModel):
                 past_key_values = None,
                 labels = None,
                 images = images,
-                vit_text_input_ids = vit_text_input_ids.to(self.device),
-                vit_text_attention_mask = vit_text_attention_mask.to(self.device),
+                vit_text_input_ids = vit_text_input_ids,
+                vit_text_attention_mask = vit_text_attention_mask,
                 image_sizes = image_sizes
             )
         else:
             inputs_embeds = self.llm.get_input_embeddings()(inputs)
 
-        return super().generate(
+        return self.llm.generate(
             position_ids=position_ids,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
@@ -533,13 +533,19 @@ class TCVForCausalLM(PreTrainedModel):
                                       inputs_embeds=None, **kwargs):
         images = kwargs.pop("images", None)
         image_sizes = kwargs.pop("image_sizes", None)
-        inputs = super().prepare_inputs_for_generation(
+        vit_text_input_ids = kwargs.pop("vit_text_input_ids", None)
+        vit_text_attention_mask = kwargs.pop("vit_text_attention_mask", None)
+        inputs = self.llm.prepare_inputs_for_generation(
             input_ids, past_key_values=past_key_values, inputs_embeds=inputs_embeds, **kwargs
         )
         if images is not None:
             inputs['images'] = images
         if image_sizes is not None:
             inputs['image_sizes'] = image_sizes
+        if vit_text_input_ids is not None:
+            inputs['vit_text_input_ids'] = vit_text_input_ids
+        if vit_text_attention_mask is not None:
+            inputs['vit_text_attention_mask'] = vit_text_attention_mask
         return inputs
 
 
